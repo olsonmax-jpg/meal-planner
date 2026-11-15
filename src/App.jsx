@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState, useCallback } from 'react'
+import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { supabase } from './supabase.js'
 import { AISLES, guessAisle } from './aisles.js'
 import Icon from './Icon.jsx'
@@ -69,6 +69,10 @@ function Main({ session }) {
   const [view, setView] = useState(null)
   const [sheet, setSheet] = useState(null)
   const [ready, setReady] = useState(false)
+  const [toastMsg, setToastMsg] = useState(null)
+  const lock = useRef(false)
+  const toastT = useRef()
+  const toast = (m) => { setToastMsg({ m, k: Date.now() }); clearTimeout(toastT.current); toastT.current = setTimeout(() => setToastMsg(null), 2400) }
 
   const load = useCallback(async () => {
     const [c, r, u, s] = await Promise.all([
@@ -92,22 +96,50 @@ function Main({ session }) {
     return () => { supabase.removeChannel(ch); document.removeEventListener('visibilitychange', onVis) }
   }, [load])
 
+  const norm = (n) => n.toLowerCase().replace(/\s+/g, ' ').trim()
   const addToShopping = async (items) => {
-    if (!items.length) return
-    const { error } = await supabase.from('shopping_items').insert(items.map(i => ({
-      name: i.name, quantity: i.quantity || null, aisle: i.aisle || guessAisle(i.name), recipe_id: i.recipe_id || null,
-    })))
-    if (error) alert(error.message); else load()
+    if (!items.length || lock.current) return
+    lock.current = true
+    try {
+      const { data: have, error: e0 } = await supabase.from('shopping_items').select('id,name,checked')
+      if (e0) { toast(e0.message); return }
+      const map = new Map((have || []).map(h => [norm(h.name), h]))
+      const fresh = []; const revive = []; let skipped = 0
+      const seen = new Set()
+      for (const i of items) {
+        const k = norm(i.name)
+        if (!k || seen.has(k)) { if (k) skipped++; continue }
+        seen.add(k)
+        const ex = map.get(k)
+        if (!ex) fresh.push(i)
+        else if (ex.checked) revive.push(ex.id)
+        else skipped++
+      }
+      if (fresh.length) {
+        const { error } = await supabase.from('shopping_items').insert(fresh.map(i => ({
+          name: i.name.trim(), quantity: i.quantity || null, aisle: i.aisle || guessAisle(i.name), recipe_id: i.recipe_id || null,
+        })))
+        if (error) { toast(error.message); return }
+      }
+      for (const id of revive) await supabase.from('shopping_items').update({ checked: false }).eq('id', id)
+      const added = fresh.length + revive.length
+      toast(added ? `Added ${added}${skipped ? ` · ${skipped} already on your list` : ''}` : 'Already on your list')
+      await load()
+    } finally { lock.current = false }
   }
 
   const toggleQueue = async (r) => {
-    const q = upNext.find(u => u.recipe_id === r.id)
-    if (q) await supabase.from('up_next').delete().eq('id', q.id)
-    else await supabase.from('up_next').insert({ recipe_id: r.id, position: upNext.length })
-    load()
+    if (lock.current) return
+    lock.current = true
+    try {
+      const { data: ex } = await supabase.from('up_next').select('id').eq('recipe_id', r.id)
+      if (ex && ex.length) { await supabase.from('up_next').delete().eq('recipe_id', r.id); toast('Removed from The Week') }
+      else { await supabase.from('up_next').insert({ recipe_id: r.id, position: upNext.length }); toast('Added to The Week') }
+      await load()
+    } finally { lock.current = false }
   }
 
-  const ctx = { cats, recipes, upNext, shop, load, addToShopping, setView, setSheet, setTab, toggleQueue, session }
+  const ctx = { cats, recipes, upNext, shop, load, addToShopping, setView, setSheet, setTab, toggleQueue, session, toast }
   const back = () => setView(null)
   const recipe = view?.type === 'recipe' ? recipes.find(r => r.id === view.id) : null
   const category = view?.type === 'category' ? cats.find(c => c.id === view.id) : null
@@ -126,14 +158,16 @@ function Main({ session }) {
 
   return (
     <div className="app">
-      {body}
+      <div key={tab + ':' + (view ? view.type + (view.id || '') : '')}>{body}</div>
       {!fullPage && (
         <nav className="tabbar">
+          <span className="ind" style={{ transform: `translateX(${['recipes', 'week', 'shop'].indexOf(tab) * 101}px)` }} />
           {[['recipes', 'Recipes'], ['week', 'The Week'], ['shop', 'Shopping List']].map(([k, l]) => (
             <button key={k} className={tab === k ? 'on' : ''} onClick={() => { setTab(k); setView(null) }}>{l}</button>
           ))}
         </nav>
       )}
+      {toastMsg && <div key={toastMsg.k} className="toast">{toastMsg.m}</div>}
       {sheet === 'add' && <AddSheet onClose={() => setSheet(null)} onLink={() => { setSheet(null); setView({ type: 'import' }) }} onWrite={() => { setSheet(null); setView({ type: 'write', draft: {} }) }} />}
     </div>
   )
@@ -211,22 +245,21 @@ function ListPage({ title, overline, list, onBack, ...p }) {
 }
 
 function RecipeDetail({ recipe, cats, upNext, addToShopping, onBack, load, setView, toggleQueue }) {
-  const [sel, setSel] = useState(() => new Set(recipe.ingredients.map(i => i.id)))
-  const [added, setAdded] = useState(false)
-  const cat = cats.find(c => c.id === recipe.category_id)
+  const [sel, setSel] = useState(() => new Set())
+    const cat = cats.find(c => c.id === recipe.category_id)
   const inQ = upNext.some(u => u.recipe_id === recipe.id)
   const all = sel.size === recipe.ingredients.length
   const toggle = (id) => setSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
   const add = async () => {
     await addToShopping(recipe.ingredients.filter(i => sel.has(i.id)).map(i => ({ name: i.name, quantity: i.quantity, aisle: i.aisle, recipe_id: recipe.id })))
-    setAdded(true); setTimeout(() => setAdded(false), 2000)
+    setSel(new Set())
   }
   const del = async () => {
     if (!confirm('Delete this recipe?')) return
     await supabase.from('recipes').delete().eq('id', recipe.id); await load(); setView(null)
   }
   return (
-    <div className="screen">
+    <div className="screen tall">
       <div className="hero">
         {recipe.image_url ? <img src={recipe.image_url} alt="" /> : <Icon name={cat?.icon || 'dinner_dining'} size={72} />}
         <Back onBack={onBack} />
@@ -252,9 +285,9 @@ function RecipeDetail({ recipe, cats, upNext, addToShopping, onBack, load, setVi
             <span className="nm">{i.name}</span><span className="qty">{i.quantity}</span>
           </button>
         ))}
-        <button className="link" style={{ marginTop: 24, color: '#9b2c1f' }} onClick={del}>Delete recipe</button>
+        <button className="link" style={{ marginTop: 28, color: '#9b2c1f' }} onClick={del}>Delete recipe</button>
       </div>
-      <div className="cta-bar"><button className="cta" disabled={!sel.size} onClick={add}>{added ? 'Added to shopping list' : `Add ${sel.size} to shopping list`}</button></div>
+      <div className="cta-bar"><button className="cta" disabled={!sel.size} onClick={add}>{sel.size ? `Add ${sel.size} to shopping list` : 'Select ingredients to add'}</button></div>
     </div>
   )
 }
@@ -290,25 +323,32 @@ function Week({ upNext, recipes, cats, load, addToShopping, setView, setTab, set
   )
 }
 
-function Shopping({ shop, load }) {
+function Shopping({ shop, load, addToShopping, toast }) {
   const [name, setName] = useState('')
   const [copied, setCopied] = useState(false)
+  const [out, setOut] = useState(() => new Set())
   const groups = useMemo(() => {
     const g = {}
     for (const i of shop) (g[i.aisle] ||= []).push(i)
     return AISLES.filter(a => g[a]).map(a => [a, [...g[a]].sort((x, y) => x.checked - y.checked)])
   }, [shop])
   const left = shop.filter(i => !i.checked).length
+  const nChecked = shop.length - left
   const add = async (e) => {
     e.preventDefault()
     const n = name.trim(); if (!n) return
     const { quantity, name: nm } = splitLine(n)
     setName('')
-    await supabase.from('shopping_items').insert({ name: nm, quantity: quantity || null, aisle: guessAisle(nm) })
-    load()
+    await addToShopping([{ name: nm, quantity }])
   }
   const toggle = async (i) => { await supabase.from('shopping_items').update({ checked: !i.checked }).eq('id', i.id); load() }
-  const clear = async () => { await supabase.from('shopping_items').delete().eq('checked', true); load() }
+  const remove = async (ids) => {
+    setOut(s => new Set([...s, ...ids]))
+    await new Promise(r => setTimeout(r, 260))
+    await supabase.from('shopping_items').delete().in('id', ids)
+    await load(); setOut(new Set())
+  }
+  const clearAll = async () => { if (confirm('Clear the whole shopping list?')) { await remove(shop.map(i => i.id)); toast('List cleared') } }
   const copy = async () => {
     const text = groups.map(([, items]) => items.filter(i => !i.checked).map(i => `${i.quantity ? i.quantity + ' ' : ''}${i.name}`).join('\n')).filter(Boolean).join('\n')
     try { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 2000) } catch { prompt('Copy your list', text) }
@@ -321,21 +361,30 @@ function Shopping({ shop, load }) {
       </div>
       <form className="additem" onSubmit={add}>
         <Icon name="add" size={24} />
-        <input placeholder="Add an item, e.g. 2 lemons" value={name} onChange={e => setName(e.target.value)} />
+        <input placeholder="Add an item, e.g. 2 lemons" value={name} enterKeyHint="done" onChange={e => setName(e.target.value)} />
+        {name.trim() && <button type="submit" className="pill-lime pop" style={{ padding: '8px 16px' }}>Add</button>}
       </form>
+      {shop.length > 0 && (
+        <div className="row-between">
+          <button className="link" disabled={!nChecked} style={{ opacity: nChecked ? 1 : .4 }} onClick={() => remove(shop.filter(i => i.checked).map(i => i.id))}>Clear checked{nChecked ? ` (${nChecked})` : ''}</button>
+          <button className="link" style={{ color: '#9b2c1f' }} onClick={clearAll}>Clear all</button>
+        </div>
+      )}
       {shop.length === 0 && <div className="empty">Your list is empty</div>}
       {groups.map(([aisle, items]) => (
         <div key={aisle} className="panel">
           <div className="sh"><div className="overline">{aisleLabel(aisle)}</div><div className="caption">{items.length}</div></div>
           {items.map(i => (
-            <button key={i.id} className={'crow' + (i.checked ? ' done' : '')} onClick={() => toggle(i)}>
-              <span className={'box' + (i.checked ? ' on' : '')}>{i.checked && <Icon name="check" size={18} />}</span>
-              <span className="nm">{i.name}</span><span className="qty">{i.quantity}</span>
-            </button>
+            <div key={i.id} className={'crow srow' + (i.checked ? ' done' : '') + (out.has(i.id) ? ' out' : '')}>
+              <button className="srow-main" onClick={() => toggle(i)}>
+                <span className={'box' + (i.checked ? ' on' : '')}>{i.checked && <Icon name="check" size={18} />}</span>
+                <span className="nm">{i.name}</span><span className="qty">{i.quantity}</span>
+              </button>
+              <button className="x" aria-label={`Remove ${i.name}`} onClick={() => remove([i.id])}><Icon name="close" size={20} /></button>
+            </div>
           ))}
         </div>
       ))}
-      {shop.some(i => i.checked) && <button className="link" onClick={clear}>Clear checked items</button>}
     </div>
   )
 }

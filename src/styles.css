@@ -102,3 +102,47 @@ input, textarea, select { font: inherit; color: inherit; }
 .err { color: #9b2c1f; font-size: 14px; }
 .empty { text-align: center; color: var(--muted); padding: 32px 12px; }
 .center { min-height: 100vh; display: flex; flex-direction: column; justify-content: center; gap: 16px; padding: 24px; max-width: 430px; margin: 0 auto; }
+
+/* long screens (recipe detail) */
+.screen.tall { padding-bottom: 280px; }
+.srow { gap: 0; }
+.srow-main { display: flex; align-items: center; gap: 14px; flex: 1; min-width: 0; min-height: 52px; }
+.srow .x { color: var(--muted); padding: 10px 0 10px 10px; display: flex; }
+.srow.out { overflow: hidden; animation: out .26s ease forwards; }
+
+/* motion */
+@keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes slideup { from { transform: translateY(100%); } to { transform: none; } }
+@keyframes pop { 0% { transform: scale(.6); opacity: 0; } 60% { transform: scale(1.12); } 100% { transform: scale(1); opacity: 1; } }
+@keyframes out { to { opacity: 0; transform: translateX(28px); max-height: 0; min-height: 0; } }
+@keyframes toastin { 0% { opacity: 0; transform: translate(-50%, 14px) scale(.96); } 12%, 85% { opacity: 1; transform: translate(-50%, 0) scale(1); } 100% { opacity: 0; transform: translate(-50%, 8px); } }
+.screen > * { animation: rise .5s cubic-bezier(.2,.8,.2,1) both; }
+.screen > *:nth-child(2) { animation-delay: .04s; } .screen > *:nth-child(3) { animation-delay: .08s; }
+.screen > *:nth-child(4) { animation-delay: .12s; } .screen > *:nth-child(5) { animation-delay: .16s; }
+.screen > *:nth-child(6) { animation-delay: .20s; } .screen > *:nth-child(7) { animation-delay: .24s; }
+.screen > *:nth-child(n+8) { animation-delay: .28s; }
+.cta-bar { animation: rise .5s .15s cubic-bezier(.2,.8,.2,1) both !important; }
+.grid .tile { animation: rise .5s cubic-bezier(.2,.8,.2,1) both; }
+.grid .tile:nth-child(1){animation-delay:.10s}.grid .tile:nth-child(2){animation-delay:.13s}.grid .tile:nth-child(3){animation-delay:.16s}
+.grid .tile:nth-child(4){animation-delay:.19s}.grid .tile:nth-child(5){animation-delay:.22s}.grid .tile:nth-child(6){animation-delay:.25s}
+.grid .tile:nth-child(7){animation-delay:.28s}.grid .tile:nth-child(8){animation-delay:.31s}.grid .tile:nth-child(9){animation-delay:.34s}
+.sheet-bg { animation: fade .25s ease both; }
+.sheet { animation: slideup .38s cubic-bezier(.2,.9,.25,1) both; }
+.pop, .box.on { animation: pop .3s cubic-bezier(.3,1.4,.5,1) both; }
+.toast { position: fixed; left: 50%; bottom: calc(100px + env(safe-area-inset-bottom)); transform: translateX(-50%); background: var(--ink); color: var(--card); padding: 12px 20px; border-radius: 100px; font-size: 14px; line-height: 18px; font-weight: 500; z-index: 20; white-space: nowrap; animation: toastin 2.4s cubic-bezier(.2,.8,.2,1) both; box-shadow: 0 8px 24px rgba(28,43,36,.25); }
+button, .rcard, .tile, .option, .qitem { transition: transform .18s cubic-bezier(.2,.8,.2,1), background-color .25s ease, color .25s ease, opacity .25s ease; }
+button:active:not(:disabled), .rcard:active, .tile:active, .option:active { transform: scale(.97); }
+.cta:active:not(:disabled) { transform: scale(.985); }
+.pill-lime { transition: transform .18s, background-color .3s ease, color .3s ease; }
+.box { transition: background-color .2s ease, border-color .2s ease; }
+.crow .nm { transition: color .25s ease; }
+.crow.done .nm { transition: color .25s ease; }
+.thumb img { animation: fade .5s ease both; }
+.chip { transition: background-color .2s ease, border-color .2s ease, transform .18s; }
+/* tab bar with sliding indicator */
+.tabbar { padding: 0 24px; justify-content: flex-start; }
+.tabbar .ind { position: absolute; left: 24px; top: 17px; width: 101px; height: 34px; border-radius: 100px; background: var(--lime); transition: transform .45s cubic-bezier(.3,1.35,.5,1); pointer-events: none; }
+.tabbar button { position: relative; width: 101px; flex: none; padding: 8px 0; background: none !important; transition: color .3s ease, transform .18s; }
+.tabbar button.on { color: var(--green); }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; animation-delay: 0s !important; transition-duration: .01ms !important; } }
