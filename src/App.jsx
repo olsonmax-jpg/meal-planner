@@ -3,13 +3,24 @@ import { supabase } from './supabase.js'
 import { AISLES, guessAisle } from './aisles.js'
 import Icon from './Icon.jsx'
 import { scaleQty, annotate, parseMethod } from './recipeUtils.js'
+import { GROCERIES } from './groceries.js'
 
 const host = (u) => { try { return new URL(u).hostname.replace(/^www\./, '') } catch { return '' } }
 const UNIT = '(?:kg|g|gr|ml|l|cl|dl|tsp|tbsp|cups?|oz|lb|pinch|handful|bunch|tins?|cans?|cloves?|slices?|el|tl|blik|bos)'
 function splitLine(s) {
   const clean = s.replace(/\s+/g, ' ').trim()
   const m = new RegExp(`^([\\d½¼¾⅓⅔.,/\\- ]+\\s*${UNIT}?\\b\\.?)\\s+(.*)$`, 'i').exec(clean)
-  return m && m[2] ? { quantity: m[1].trim(), name: m[2].trim() } : { quantity: '', name: clean }
+  return m && m[2] ? { quantity: m[1].trim(), name: simplifyName(m[2]) } : { quantity: '', name: simplifyName(clean) }
+}
+// Shopping names stay short: drop notes in brackets and prep instructions after a comma.
+function simplifyName(raw) {
+  let n = String(raw || '').replace(/\s+/g, ' ')
+  let prev
+  do { prev = n; n = n.replace(/\s*\([^()]*\)/g, '') } while (n !== prev)
+  n = n.replace(/\(.*$/, '').split(/,|;| – | - | — /)[0]
+  n = n.replace(/\b(to taste|optional|for serving|for garnish|to serve|plus extra)\b.*$/i, '')
+  n = n.replace(/\s+/g, ' ').replace(/[\s.,:-]+$/, '').trim()
+  return n || String(raw || '').trim()
 }
 const AISLE_LABEL = { 'Vegetables & fruit': 'Produce', 'Spices & herbs': 'Spices & sauces' }
 const aisleLabel = (a) => AISLE_LABEL[a] || a
@@ -107,7 +118,8 @@ function Main({ session }) {
       const map = new Map((have || []).map(h => [norm(h.name), h]))
       const fresh = []; const revive = []; let skipped = 0
       const seen = new Set()
-      for (const i of items) {
+      for (const raw of items) {
+        const i = { ...raw, name: simplifyName(raw.name) }
         const k = norm(i.name)
         if (!k || seen.has(k)) { if (k) skipped++; continue }
         seen.add(k)
@@ -134,8 +146,8 @@ function Main({ session }) {
     lock.current = true
     try {
       const { data: ex } = await supabase.from('up_next').select('id').eq('recipe_id', r.id)
-      if (ex && ex.length) { await supabase.from('up_next').delete().eq('recipe_id', r.id); toast('Removed from The Week') }
-      else { await supabase.from('up_next').insert({ recipe_id: r.id, position: upNext.length }); toast('Added to The Week') }
+      if (ex && ex.length) { await supabase.from('up_next').delete().eq('recipe_id', r.id); toast('Removed from Up next') }
+      else { await supabase.from('up_next').insert({ recipe_id: r.id, position: upNext.length }); toast('Added to Up next') }
       await load()
     } finally { lock.current = false }
   }
@@ -162,8 +174,8 @@ function Main({ session }) {
       <div key={tab + ':' + (view ? view.type + (view.id || '') : '')}>{body}</div>
       {!fullPage && (
         <nav className="tabbar">
-          <span className="ind" style={{ transform: `translateX(${['recipes', 'week', 'shop'].indexOf(tab) * 101}px)` }} />
-          {[['recipes', 'Recipes'], ['week', 'The Week'], ['shop', 'Shopping List']].map(([k, l]) => (
+          <span className="ind" style={{ transform: `translateX(${['recipes', 'week', 'shop'].indexOf(tab) * 100}%)` }} />
+          {[['recipes', 'Recipes'], ['week', 'Up next'], ['shop', 'Shopping List']].map(([k, l]) => (
             <button key={k} className={tab === k ? 'on' : ''} onClick={() => { setTab(k); setView(null) }}>{l}</button>
           ))}
         </nav>
@@ -173,6 +185,8 @@ function Main({ session }) {
     </div>
   )
 }
+
+const Lock = ({ q, n }) => <span className="nm">{q ? <span className="qn">{q}</span> : null}{q ? ' ' : ''}{n}</span>
 
 function Thumb({ url, icon = 'dinner_dining', size }) {
   const [bad, setBad] = useState(false)
@@ -203,7 +217,7 @@ function Recipes(p) {
   const hits = q.trim() ? recipes.filter(r => r.title.toLowerCase().includes(q.trim().toLowerCase())) : null
   return (
     <div className="screen">
-      <div className="head">
+      <div className="head pagehead">
         <div className="titleblock"><div className="overline">Zonneweg Kitchen</div><h1 className="display">Recipes</h1></div>
         <button className="pill-lime" onClick={() => setSheet('add')}>+ Add</button>
       </div>
@@ -235,12 +249,40 @@ function Back({ onBack }) {
   return <button className="round" onClick={onBack} aria-label="Back"><Icon name="arrow_back" size={24} /></button>
 }
 
+function MiniCard({ r, cats, setView, upNext, toggleQueue }) {
+  const inQ = upNext.some(u => u.recipe_id === r.id)
+  const cat = cats.find(c => c.id === r.category_id)
+  return (
+    <div className="mcard" onClick={() => setView({ type: 'recipe', id: r.id })}>
+      <div className="mimg"><Thumb url={r.image_url} icon={cat?.icon} />
+        <button className={'mq' + (inQ ? ' on' : '')} aria-label={inQ ? 'Remove from Up next' : 'Add to Up next'} onClick={(e) => { e.stopPropagation(); toggleQueue(r) }}><Icon name={inQ ? 'check' : 'add'} size={20} /></button>
+      </div>
+      <div className="t">{r.title}</div>
+      <div className="caption">{[r.minutes && `${r.minutes} min`, plural(r.ingredients.length, 'ingredient')].filter(Boolean).join(' · ')}</div>
+    </div>
+  )
+}
+
+function ViewToggle({ mode, setMode }) {
+  const ic = (d) => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{d}</svg>
+  return (
+    <div className="seg vt" role="group" aria-label="View">
+      <button className={mode === 'list' ? 'on' : ''} aria-label="List view" onClick={() => setMode('list')}>{ic(<><path d="M4 6h16M4 12h16M4 18h16" /></>)}</button>
+      <button className={mode === 'cards' ? 'on' : ''} aria-label="Card view" onClick={() => setMode('cards')}>{ic(<><rect x="4" y="4" width="7" height="7" rx="1.5" /><rect x="13" y="4" width="7" height="7" rx="1.5" /><rect x="4" y="13" width="7" height="7" rx="1.5" /><rect x="13" y="13" width="7" height="7" rx="1.5" /></>)}</button>
+    </div>
+  )
+}
+
 function ListPage({ title, overline, list, onBack, ...p }) {
+  const [mode, setModeState] = useState(() => { try { return localStorage.getItem('viewMode') || 'list' } catch { return 'list' } })
+  const setMode = (m) => { setModeState(m); try { localStorage.setItem('viewMode', m) } catch { /* ignore */ } }
   return (
     <div className="screen">
-      <Back onBack={onBack} />
+      <div className="row-between"><Back onBack={onBack} /><ViewToggle mode={mode} setMode={setMode} /></div>
       <div className="titleblock"><div className="overline">{overline}</div><h1 className="display">{title}</h1></div>
-      {list.length ? list.map(r => <RecipeCard key={r.id} r={r} {...p} />) : <div className="empty">Nothing here yet</div>}
+      {!list.length ? <div className="empty">Nothing here yet</div>
+        : mode === 'cards' ? <div className="cgrid">{list.map(r => <MiniCard key={r.id} r={r} {...p} />)}</div>
+        : list.map(r => <RecipeCard key={r.id} r={r} {...p} />)}
     </div>
   )
 }
@@ -307,7 +349,7 @@ function RecipeDetail({ recipe, cats, upNext, addToShopping, onBack, load, setVi
       </div>
       <div className="row-between" style={{ marginTop: 8 }}>
         {cat ? <span className="chip">{cat.name}</span> : <span />}
-        <button className={'pill-lime' + (inQ ? ' on' : '')} onClick={() => toggleQueue(recipe)}>{inQ ? 'In The Week' : '+ The Week'}</button>
+        <button className={'pill-lime' + (inQ ? ' on' : '')} onClick={() => toggleQueue(recipe)}>{inQ ? 'In Up next' : '+ Up next'}</button>
       </div>
       <h1 className="title">{recipe.title}</h1>
       <div className="caption">{[recipe.minutes && `${recipe.minutes} min`, recipe.servings && `Serves ${Math.round(recipe.servings * mult)}`, plural(recipe.ingredients.length, 'ingredient')].filter(Boolean).join(' · ')}</div>
@@ -328,7 +370,7 @@ function RecipeDetail({ recipe, cats, upNext, addToShopping, onBack, load, setVi
           {items.map(i => (
             <button key={i.id} className="crow" onClick={() => toggle(i.id)} style={{ borderBottom: '1px solid var(--line)' }}>
               <span className={'box' + (sel.has(i.id) ? ' on' : '')}>{sel.has(i.id) && <Icon name="check" size={18} />}</span>
-              <span className="nm">{i.name}</span><span className="qty">{scaleQty(i.quantity, mult)}</span>
+              <Lock q={scaleQty(i.quantity, mult)} n={i.name} />
             </button>
           ))}
         </div>
@@ -364,7 +406,7 @@ function Week({ upNext, recipes, cats, load, addToShopping, setView, setTab, set
   }
   return (
     <div className="screen">
-      <div className="titleblock" style={{ marginTop: 28 }}><div className="overline">{plural(open.length, 'recipe')} queued</div><h1 className="display">Up next</h1></div>
+      <div className="titleblock pagehead"><div className="overline">{plural(open.length, 'recipe')} queued</div><h1 className="display">Up next</h1></div>
       {items.map((x, n) => (
         <div key={x.u.id} className={'qitem' + (n === 0 ? ' first' : '')} style={{ opacity: x.u.cooked ? .55 : 1 }}>
           <button className="num" onClick={() => done(x)} aria-label="Mark cooked" style={{ justifyContent: 'center' }}>{x.u.cooked ? <Icon name="check" size={18} /> : n + 1}</button>
@@ -383,7 +425,7 @@ function Week({ upNext, recipes, cats, load, addToShopping, setView, setTab, set
   )
 }
 
-function Shopping({ shop, load, addToShopping, toast }) {
+function Shopping({ shop, recipes, load, addToShopping, toast }) {
   const [name, setName] = useState('')
   const [copied, setCopied] = useState(false)
   const [out, setOut] = useState(() => new Set())
@@ -392,6 +434,27 @@ function Shopping({ shop, load, addToShopping, toast }) {
     for (const i of shop) (g[i.aisle] ||= []).push(i)
     return AISLES.filter(a => g[a]).map(a => [a, [...g[a]].sort((x, y) => x.checked - y.checked)])
   }, [shop])
+  const pool = useMemo(() => {
+    const m = new Map()
+    const put = (n) => { const x = simplifyName(n); const k = x.toLowerCase(); if (x && x.length < 40 && !m.has(k)) m.set(k, x) }
+    shop.forEach(i => put(i.name)); recipes.forEach(r => r.ingredients.forEach(i => put(i.name))); GROCERIES.forEach(put)
+    return [...m.values()]
+  }, [shop, recipes])
+  const typed = splitLine(name)
+  const term = typed.name.toLowerCase().trim()
+  const suggestions = useMemo(() => {
+    if (term.length < 2) return []
+    const onList = new Set(shop.filter(i => !i.checked).map(i => i.name.toLowerCase()))
+    const scored = []
+    for (const c of pool) {
+      const l = c.toLowerCase()
+      if (l === term || onList.has(l)) continue
+      const sc = l.startsWith(term) ? 0 : l.split(' ').some(w => w.startsWith(term)) ? 1 : -1
+      if (sc >= 0) scored.push([sc, l.length, c])
+    }
+    return scored.sort((a, b) => a[0] - b[0]).slice(0, 5).map(x => x[2])
+  }, [term, pool, shop])
+  const pick = async (n) => { setName(''); await addToShopping([{ name: n, quantity: typed.quantity }]) }
   const left = shop.filter(i => !i.checked).length
   const nChecked = shop.length - left
   const add = async (e) => {
@@ -415,15 +478,28 @@ function Shopping({ shop, load, addToShopping, toast }) {
   }
   return (
     <div className="screen">
-      <div className="head" style={{ marginTop: 28 }}>
-        <div className="titleblock"><div className="overline">{plural(left, 'item')} · sorted by aisle</div><h1 className="title">Shopping list</h1></div>
+      <div className="head pagehead">
+        <div className="titleblock"><div className="overline">{plural(left, 'item')} · sorted by aisle</div><h1 className="display">Shopping list</h1></div>
         <button className="pill-lime" onClick={copy}>{copied ? 'Copied' : 'Copy list'}</button>
       </div>
       <form className="additem" onSubmit={add}>
         <Icon name="add" size={24} />
-        <input placeholder="Add an item, e.g. 2 lemons" value={name} enterKeyHint="done" onChange={e => setName(e.target.value)} />
+        <input placeholder="Add an item, e.g. 2 lemons" value={name} enterKeyHint="done" autoComplete="off" autoCorrect="off" onChange={e => setName(e.target.value)} />
         {name.trim() && <button type="submit" className="pill-lime pop" style={{ padding: '8px 16px' }}>Add</button>}
       </form>
+      {suggestions.length > 0 && (
+        <div className="suggest" role="listbox">
+          {suggestions.map(c => {
+            const i = c.toLowerCase().indexOf(term)
+            return (
+              <button key={c} type="button" role="option" onMouseDown={e => e.preventDefault()} onClick={() => pick(c)}>
+                <Icon name="add" size={20} />
+                <span>{i >= 0 ? <>{c.slice(0, i)}<b>{c.slice(i, i + term.length)}</b>{c.slice(i + term.length)}</> : c}</span>
+              </button>
+            )
+          })}
+        </div>
+      )}
       {shop.length > 0 && (
         <div className="row-between">
           <button className="link" disabled={!nChecked} style={{ opacity: nChecked ? 1 : .4 }} onClick={() => remove(shop.filter(i => i.checked).map(i => i.id))}>Clear checked{nChecked ? ` (${nChecked})` : ''}</button>
@@ -438,7 +514,7 @@ function Shopping({ shop, load, addToShopping, toast }) {
             <div key={i.id} className={'crow srow' + (i.checked ? ' done' : '') + (out.has(i.id) ? ' out' : '')}>
               <button className="srow-main" onClick={() => toggle(i)}>
                 <span className={'box' + (i.checked ? ' on' : '')}>{i.checked && <Icon name="check" size={18} />}</span>
-                <span className="nm">{i.name}</span><span className="qty">{i.quantity}</span>
+                <Lock q={i.quantity} n={i.name} />
               </button>
               <button className="x" aria-label={`Remove ${i.name}`} onClick={() => remove([i.id])}><Icon name="close" size={20} /></button>
             </div>
@@ -575,7 +651,7 @@ function ImportPage({ cats, load, setView, session, onBack }) {
               {i.group && i.group !== list[n - 1]?.group && <div className="overline ghead">{i.group}</div>}
               <button className="crow" onClick={() => setSkip(s => { const x = new Set(s); x.has(n) ? x.delete(n) : x.add(n); return x })}>
                 <span className={'box' + (skip.has(n) ? '' : ' on')}>{!skip.has(n) && <Icon name="check" size={18} />}</span>
-                <span className="nm">{i.name}</span><span className="qty">{i.quantity}</span>
+                <Lock q={i.quantity} n={i.name} />
               </button>
               </React.Fragment>
             ))}

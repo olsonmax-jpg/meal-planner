@@ -8,7 +8,8 @@ html, body, #root { height: 100%; margin: 0; }
 body { background: var(--cream); color: var(--ink); font: 400 16px/22px var(--font); }
 button { font: inherit; color: inherit; cursor: pointer; border: 0; background: none; padding: 0; text-align: left; }
 input, textarea, select { font: inherit; color: inherit; }
-.app { max-width: 430px; margin: 0 auto; min-height: 100%; position: relative; }
+.app { margin: 0 auto; min-height: 100%; position: relative; }
+@media (min-width: 520px) { .app { max-width: 430px; } }
 .screen { padding: calc(env(safe-area-inset-top) + 16px) 24px 160px; display: flex; flex-direction: column; gap: 12px; }
 .screen.form { gap: 16px; }
 .overline { font-size: 11px; line-height: 14px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
@@ -168,3 +169,38 @@ button:active:not(:disabled), .rcard:active, .tile:active, .option:active { tran
 .step.done .snum { background: var(--green); color: var(--lime); }
 .qchip { display: inline-block; background: var(--lime); color: var(--green); border-radius: 100px; padding: 0 9px; margin: 0 3px; font-size: 14px; line-height: 22px; font-weight: 600; white-space: nowrap; vertical-align: 1px; }
 .step.done .qchip { background: var(--sage); }
+
+/* round 3 */
+.pagehead { margin-top: 28px; }
+.crow .nm { font-size: 16px; line-height: 22px; }
+.crow .nm .qn { font-weight: 600; color: var(--green); }
+.crow .qty { display: none; }
+/* nav: spans the content width, three equal slots */
+.tabbar { left: 50%; width: min(calc(100% - 48px), 382px); padding: 0 8px; justify-content: stretch; }
+.tabbar .ind { left: 8px; width: calc((100% - 16px) / 3); }
+.tabbar button { flex: 1 1 0; width: auto; padding: 8px 0; }
+/* hero: truly edge to edge, behind the status bar, no scrim */
+.hero { width: 100vw; margin-left: calc(50% - 50vw); margin-right: 0; border-radius: 0; }
+.hero .scrim { display: none; }
+.hero .round, .cookpill { box-shadow: 0 2px 12px rgba(28,43,36,.18); }
+.hero .round { left: 24px; }
+.cookpill { right: 24px; }
+/* card view */
+.vt { padding: 3px; gap: 0; }
+.vt button { padding: 7px 12px; color: var(--muted); display: flex; }
+.vt button.on { background: var(--green); color: var(--lime); }
+.cgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.mcard { background: var(--card); border-radius: 20px; padding: 8px 8px 12px; display: flex; flex-direction: column; gap: 2px; cursor: pointer; min-width: 0; transition: transform .18s; }
+.mcard:active { transform: scale(.97); }
+.mimg { position: relative; margin-bottom: 8px; }
+.mimg .thumb { width: 100%; height: 96px; border-radius: 14px; }
+.mcard .t { font-size: 15px; line-height: 20px; font-weight: 500; padding: 0 4px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; min-height: 40px; }
+.mcard .caption { padding: 0 4px; font-size: 12px; line-height: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mq { position: absolute; right: 6px; bottom: 6px; width: 32px; height: 32px; border-radius: 100px; background: var(--lime); color: var(--green); display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 8px rgba(28,43,36,.18); }
+.mq.on { background: var(--green); color: var(--lime); }
+/* predictive add */
+.suggest { background: var(--card); border-radius: 24px; padding: 6px 8px; display: flex; flex-direction: column; margin-top: -4px; animation: rise .25s ease both; }
+.suggest button { display: flex; align-items: center; gap: 12px; padding: 12px 10px; border-radius: 16px; color: var(--ink); width: 100%; }
+.suggest button + button { border-top: 1px solid var(--line); border-radius: 0; }
+.suggest button svg { color: var(--green); flex: none; }
+.suggest b { font-weight: 600; }
