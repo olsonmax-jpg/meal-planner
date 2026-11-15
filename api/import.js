@@ -46,6 +46,56 @@ function splitIngredient(s) {
   return { quantity: '', name: clean }
 }
 
+
+const clean = (h) => String(h || '').replace(/<br\s*\/?>/gi, ' ').replace(/<[^>]+>/g, ' ')
+  .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#0?39;|&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+  .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(+n)).replace(/\s+/g, ' ').trim()
+
+function parseSteps(ins) {
+  const out = []
+  const walk = (n, section) => {
+    if (!n) return
+    if (typeof n === 'string') {
+      const parts = n.includes('\n') || /<li|<p/i.test(n) ? n.split(/\n+|<\/p>|<\/li>/i) : [n]
+      for (const p of parts) { const t = clean(p); if (t) out.push({ t, s: section }) }
+    } else if (Array.isArray(n)) n.forEach(x => walk(x, section))
+    else if (typeof n === 'object') {
+      const type = [].concat(n['@type'] || [])
+      if (type.includes('HowToSection') || n.itemListElement) {
+        const name = clean(n.name) || section
+        walk(n.itemListElement, name)
+      } else walk(n.text || n.name, section)
+    }
+  }
+  walk(ins, null)
+  return out
+}
+
+const normKey = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '')
+const GENERIC = /^(ingredients?|method|instructions?|directions?|steps?|preparation|equipment|nutrition|notes?|tips?|description|you will need|shopping list|reviews?|comments?|related.*|more.*|recipe)$/i
+
+function groupIngredients(root, flat) {
+  // Walk headings and list items in document order; label each ingredient li with the latest group heading.
+  const keys = flat.map(i => normKey(i.raw))
+  const label = new Array(flat.length).fill(null)
+  let heading = null
+  for (const el of root.querySelectorAll('h1,h2,h3,h4,h5,h6,li,.wprm-recipe-group-name')) {
+    const tag = (el.tagName || '').toLowerCase()
+    const txt = clean(el.text)
+    if (tag !== 'li') {
+      if (!txt) continue
+      heading = GENERIC.test(txt.replace(/[:\s]+$/, '')) ? null : (txt.length <= 48 ? txt.replace(/[:\s]+$/, '') : null)
+      continue
+    }
+    const k = normKey(txt)
+    if (k.length < 3) continue
+    const idx = keys.findIndex((x, n) => label[n] === null && x && (x === k || (k.length > 6 && x.length > 6 && (k.includes(x) || x.includes(k)))))
+    if (idx >= 0) label[idx] = heading || ''
+  }
+  const names = new Set(label.filter(Boolean))
+  return names.size >= 1 && label.some(Boolean) ? label.map(l => l || null) : flat.map(() => null)
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' })
   if (!(await authed(req))) return res.status(401).json({ error: 'Not signed in' })
@@ -71,7 +121,11 @@ export default async function handler(req, res) {
   const ogTitle = root.querySelector('meta[property="og:title"]')?.getAttribute('content')
   const image = (recipe && imageOf(recipe.image)) || og || null
   const title = (recipe?.name || ogTitle || root.querySelector('title')?.text || '').toString().trim()
-  const ingredients = (recipe?.recipeIngredient || []).map(splitIngredient)
+  const flat = (recipe?.recipeIngredient || []).map(r => ({ raw: clean(r), ...splitIngredient(clean(r)) }))
+  let groups = flat.map(() => null)
+  try { groups = groupIngredients(root, flat) } catch {}
+  const ingredients = flat.map((i, n) => ({ quantity: i.quantity, name: i.name, group: groups[n] }))
+  const steps = parseSteps(recipe?.recipeInstructions)
   const yieldRaw = String(first(recipe?.recipeYield) || '')
   const servings = parseInt((yieldRaw.match(/\d+/) || [])[0]) || null
 
@@ -82,6 +136,7 @@ export default async function handler(req, res) {
     servings,
     source_url: target.toString(),
     ingredients,
+    steps,
     found_recipe: !!recipe,
   })
 }
