@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { supabase } from './supabase.js'
 import { AISLES, guessAisle } from './aisles.js'
 import Icon from './Icon.jsx'
+import { scaleQty, annotate, parseMethod } from './recipeUtils.js'
 
 const host = (u) => { try { return new URL(u).hostname.replace(/^www\./, '') } catch { return '' } }
 const UNIT = '(?:kg|g|gr|ml|l|cl|dl|tsp|tbsp|cups?|oz|lb|pinch|handful|bunch|tins?|cans?|cloves?|slices?|el|tl|blik|bos)'
@@ -244,32 +245,75 @@ function ListPage({ title, overline, list, onBack, ...p }) {
   )
 }
 
-function RecipeDetail({ recipe, cats, upNext, addToShopping, onBack, load, setView, toggleQueue }) {
+function useWakeLock(toast) {
+  const [on, setOn] = useState(false)
+  const lock = useRef(null)
+  const acquire = async () => {
+    try { lock.current = await navigator.wakeLock.request('screen'); lock.current.addEventListener('release', () => { lock.current = null }) } catch { /* ignore */ }
+  }
+  useEffect(() => {
+    if (!on) return
+    const vis = () => { if (document.visibilityState === 'visible' && !lock.current) acquire() }
+    document.addEventListener('visibilitychange', vis)
+    return () => document.removeEventListener('visibilitychange', vis)
+  }, [on])
+  useEffect(() => () => { lock.current?.release?.() }, [])
+  const toggle = async () => {
+    if (on) { await lock.current?.release?.(); lock.current = null; setOn(false); toast('Cook mode off'); return }
+    if (!('wakeLock' in navigator)) { toast('Your browser can\u2019t keep the screen awake'); return }
+    await acquire()
+    if (lock.current) { setOn(true); toast('Cook mode on · screen stays awake') } else toast('Couldn\u2019t keep the screen awake')
+  }
+  return [on, toggle]
+}
+
+function RecipeDetail({ recipe, cats, upNext, addToShopping, onBack, load, setView, toggleQueue, toast }) {
   const [sel, setSel] = useState(() => new Set())
-    const cat = cats.find(c => c.id === recipe.category_id)
+  const [mult, setMult] = useState(1)
+  const [done, setDone] = useState(() => new Set())
+  const [cook, toggleCook] = useWakeLock(toast)
+  const cat = cats.find(c => c.id === recipe.category_id)
   const inQ = upNext.some(u => u.recipe_id === recipe.id)
   const all = sel.size === recipe.ingredients.length
   const toggle = (id) => setSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
   const add = async () => {
-    await addToShopping(recipe.ingredients.filter(i => sel.has(i.id)).map(i => ({ name: i.name, quantity: i.quantity, aisle: i.aisle, recipe_id: recipe.id })))
+    await addToShopping(recipe.ingredients.filter(i => sel.has(i.id)).map(i => ({ name: i.name, quantity: scaleQty(i.quantity, mult), aisle: i.aisle, recipe_id: recipe.id })))
     setSel(new Set())
   }
   const del = async () => {
     if (!confirm('Delete this recipe?')) return
     await supabase.from('recipes').delete().eq('id', recipe.id); await load(); setView(null)
   }
+  const groups = useMemo(() => {
+    const out = []
+    for (const i of recipe.ingredients) {
+      const g = i.group_name || ''
+      let x = out.find(o => o.g === g)
+      if (!x) { x = { g, items: [] }; out.push(x) }
+      x.items.push(i)
+    }
+    return out
+  }, [recipe.ingredients])
+  const steps = useMemo(() => annotate(Array.isArray(recipe.steps) ? recipe.steps : [], recipe.ingredients), [recipe.steps, recipe.ingredients])
+  const byId = useMemo(() => Object.fromEntries(recipe.ingredients.map(i => [i.id, i])), [recipe.ingredients])
+  const tick = (n) => setDone(d => { const x = new Set(d); x.has(n) ? x.delete(n) : x.add(n); return x })
   return (
     <div className="screen tall">
       <div className="hero">
         {recipe.image_url ? <img src={recipe.image_url} alt="" /> : <Icon name={cat?.icon || 'dinner_dining'} size={72} />}
+        <div className="scrim" />
         <Back onBack={onBack} />
+        <button className={'cookpill' + (cook ? ' on' : '')} onClick={toggleCook}><span className="dot" />{cook ? 'Cooking' : 'Cook mode'}</button>
       </div>
       <div className="row-between" style={{ marginTop: 8 }}>
         {cat ? <span className="chip">{cat.name}</span> : <span />}
         <button className={'pill-lime' + (inQ ? ' on' : '')} onClick={() => toggleQueue(recipe)}>{inQ ? 'In The Week' : '+ The Week'}</button>
       </div>
       <h1 className="title">{recipe.title}</h1>
-      <div className="caption">{[recipe.minutes && `${recipe.minutes} min`, recipe.servings && `Serves ${recipe.servings}`, plural(recipe.ingredients.length, 'ingredient')].filter(Boolean).join(' · ')}</div>
+      <div className="caption">{[recipe.minutes && `${recipe.minutes} min`, recipe.servings && `Serves ${Math.round(recipe.servings * mult)}`, plural(recipe.ingredients.length, 'ingredient')].filter(Boolean).join(' · ')}</div>
+      <div className="seg" role="group" aria-label="Scale recipe">
+        {[1, 2, 3].map(m => <button key={m} className={mult === m ? 'on' : ''} onClick={() => setMult(m)}>{m === 1 ? 'Original' : `${m}×`}</button>)}
+      </div>
       {recipe.source_url && (
         <a className="source" href={recipe.source_url} target="_blank" rel="noopener noreferrer">
           <div><div className="body-medium">Cook from the original</div><div className="caption">{host(recipe.source_url)}</div></div>
@@ -278,15 +322,31 @@ function RecipeDetail({ recipe, cats, upNext, addToShopping, onBack, load, setVi
       )}
       <div className="row-between"><h2 className="heading">Ingredients</h2>
         <button className="link" onClick={() => setSel(all ? new Set() : new Set(recipe.ingredients.map(i => i.id)))}>{all ? 'Select none' : 'Select all'}</button></div>
-      <div>
-        {recipe.ingredients.map(i => (
-          <button key={i.id} className="crow" onClick={() => toggle(i.id)} style={{ borderBottom: '1px solid var(--line)' }}>
-            <span className={'box' + (sel.has(i.id) ? ' on' : '')}>{sel.has(i.id) && <Icon name="check" size={18} />}</span>
-            <span className="nm">{i.name}</span><span className="qty">{i.quantity}</span>
-          </button>
+      {groups.map(({ g, items }) => (
+        <div key={g}>
+          {g && <div className="overline ghead">{g}</div>}
+          {items.map(i => (
+            <button key={i.id} className="crow" onClick={() => toggle(i.id)} style={{ borderBottom: '1px solid var(--line)' }}>
+              <span className={'box' + (sel.has(i.id) ? ' on' : '')}>{sel.has(i.id) && <Icon name="check" size={18} />}</span>
+              <span className="nm">{i.name}</span><span className="qty">{scaleQty(i.quantity, mult)}</span>
+            </button>
+          ))}
+        </div>
+      ))}
+      <h2 className="heading" style={{ marginTop: 12 }}>Method</h2>
+      {steps.length === 0 && <div className="muted">No method saved for this recipe{recipe.source_url ? '. Use “Cook from the original” above.' : '.'}</div>}
+      <div className="steps">
+        {steps.map((st, n) => (
+          <div key={n}>
+            {st.s && st.s !== steps[n - 1]?.s && <div className="overline ghead" style={{ marginTop: n ? 22 : 0 }}>{st.s}</div>}
+            <button className={'step' + (done.has(n) ? ' done' : '')} onClick={() => tick(n)}>
+              <span className="snum">{done.has(n) ? <Icon name="check" size={16} /> : n + 1}</span>
+              <p>{st.parts.map((p, k) => p.chip ? <span key={k} className="qchip">{scaleQty(byId[p.chip].quantity, mult)}</span> : <React.Fragment key={k}>{p.t}</React.Fragment>)}</p>
+            </button>
+          </div>
         ))}
-        <button className="link" style={{ marginTop: 28, color: '#9b2c1f' }} onClick={del}>Delete recipe</button>
       </div>
+      <button className="link" style={{ marginTop: 28, color: '#9b2c1f' }} onClick={del}>Delete recipe</button>
       <div className="cta-bar"><button className="cta" disabled={!sel.size} onClick={add}>{sel.size ? `Add ${sel.size} to shopping list` : 'Select ingredients to add'}</button></div>
     </div>
   )
@@ -443,9 +503,10 @@ async function saveRecipe(r, ings) {
   const { data, error } = await supabase.from('recipes').insert({
     title: r.title.trim(), category_id: r.category_id, minutes: r.minutes ? +r.minutes : null, servings: r.servings ? +r.servings : null,
     source_url: r.source_url || null, image_url: r.image_url || null,
+    steps: r.steps && r.steps.length ? r.steps : null,
   }).select().single()
   if (error) throw new Error(error.message)
-  const rows = ings.filter(i => i.name.trim()).map((i, n) => ({ recipe_id: data.id, position: n, name: i.name.trim(), quantity: (i.quantity || '').trim() || null, aisle: guessAisle(i.name) }))
+  const rows = ings.filter(i => i.name.trim()).map((i, n) => ({ recipe_id: data.id, position: n, name: i.name.trim(), quantity: (i.quantity || '').trim() || null, aisle: guessAisle(i.name), group_name: i.group || null }))
   if (rows.length) {
     const { error: e2 } = await supabase.from('ingredients').insert(rows)
     if (e2) throw new Error(e2.message)
@@ -503,17 +564,20 @@ function ImportPage({ cats, load, setView, session, onBack }) {
             <div className="top">
               <Thumb url={found.image_url} size={72} />
               <div style={{ minWidth: 0 }}>
-                <div className="overline">Found {found.ingredients.length} ingredients{found.image_url ? ' + photo' : ''}</div>
+                <div className="overline">Found {found.ingredients.length} ingredients{found.steps?.length ? ` + ${found.steps.length} steps` : ''}{found.image_url ? ' + photo' : ''}</div>
                 <div className="heading">{found.title}</div>
                 <div className="caption">{[host(url), found.minutes && `${found.minutes} min`].filter(Boolean).join(' · ')}</div>
               </div>
             </div>
             <hr />
             {list.map((i, n) => (
-              <button key={n} className="crow" onClick={() => setSkip(s => { const x = new Set(s); x.has(n) ? x.delete(n) : x.add(n); return x })}>
+              <React.Fragment key={n}>
+              {i.group && i.group !== list[n - 1]?.group && <div className="overline ghead">{i.group}</div>}
+              <button className="crow" onClick={() => setSkip(s => { const x = new Set(s); x.has(n) ? x.delete(n) : x.add(n); return x })}>
                 <span className={'box' + (skip.has(n) ? '' : ' on')}>{!skip.has(n) && <Icon name="check" size={18} />}</span>
                 <span className="nm">{i.name}</span><span className="qty">{i.quantity}</span>
               </button>
+              </React.Fragment>
             ))}
             {!showAll && found.ingredients.length > 3 && <button className="link" onClick={() => setShowAll(true)}>+ {found.ingredients.length - 3} more ingredients</button>}
           </div>
@@ -533,7 +597,8 @@ function WritePage({ cats, load, setView, draft, onBack }) {
   const [title, setTitle] = useState(draft.title || '')
   const [cat, setCat] = useState(null)
   const [servings, setServings] = useState(draft.servings || '')
-  const [ings, setIngs] = useState(draft.ingredients?.length ? draft.ingredients.map(i => ({ quantity: i.quantity || '', name: i.name })) : [{ quantity: '', name: '' }, { quantity: '', name: '' }, { quantity: '', name: '' }])
+  const [ings, setIngs] = useState(draft.ingredients?.length ? draft.ingredients.map(i => ({ quantity: i.quantity || '', name: i.name, group: i.group || null })) : [{ quantity: '', name: '' }, { quantity: '', name: '' }, { quantity: '', name: '' }])
+  const [method, setMethod] = useState((draft.steps || []).map(x => x.t).join('\n\n'))
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const setIng = (n, k, v) => setIngs(a => a.map((x, i) => i === n ? { ...x, [k]: v } : x))
@@ -541,7 +606,7 @@ function WritePage({ cats, load, setView, draft, onBack }) {
   const save = async () => {
     setBusy(true); setErr('')
     try {
-      const id = await saveRecipe({ title, category_id: cat, servings, minutes: draft.minutes, source_url: draft.source_url, image_url: draft.image_url }, ings)
+      const id = await saveRecipe({ title, category_id: cat, servings, minutes: draft.minutes, source_url: draft.source_url, image_url: draft.image_url, steps: parseMethod(method) }, ings)
       await load(); setView({ type: 'recipe', id })
     } catch (ex) { setErr(ex.message); setBusy(false) }
   }
@@ -569,6 +634,7 @@ function WritePage({ cats, load, setView, draft, onBack }) {
         ))}
         <button className="link" onClick={() => setIngs(a => [...a, { quantity: '', name: '' }])}>+ Add ingredient</button>
       </div>
+      <div className="field"><div className="overline">Method</div><textarea className="box-in" rows={6} placeholder={'One step per paragraph. Mention ingredients by name and their amounts appear inline.'} value={method} onChange={e => setMethod(e.target.value)} style={{ resize: 'vertical' }} /></div>
       {err && <div className="err">{err}</div>}
       <div className="cta-bar low"><button className="cta" disabled={busy || !ok} onClick={save}>{busy ? 'Saving…' : ok ? 'Save recipe' : 'Add a name and category'}</button></div>
     </div>
