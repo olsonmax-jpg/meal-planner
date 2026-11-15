@@ -25,19 +25,12 @@ export default function App() {
 
 function Login() {
   const [email, setEmail] = useState('')
-  const [code, setCode] = useState('')
-  const [sent, setSent] = useState(false)
+  const [password, setPassword] = useState('')
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
-  const send = async (e) => {
+  const submit = async (e) => {
     e.preventDefault(); setBusy(true); setErr('')
-    const { error } = await supabase.auth.signInWithOtp({ email: email.trim(), options: { emailRedirectTo: window.location.origin } })
-    setBusy(false)
-    if (error) setErr(error.message); else setSent(true)
-  }
-  const verify = async (e) => {
-    e.preventDefault(); setBusy(true); setErr('')
-    const { error } = await supabase.auth.verifyOtp({ email: email.trim(), token: code.trim(), type: 'email' })
+    const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password })
     setBusy(false)
     if (error) setErr(error.message)
   }
@@ -45,20 +38,12 @@ function Login() {
     <div className="center">
       <div className="overline">Welcome</div>
       <h1 className="display">What are we<br />eating?</h1>
-      {!sent ? (
-        <form onSubmit={send}>
-          <div className="field"><input className="input" type="email" required placeholder="Your email" value={email} onChange={e => setEmail(e.target.value)} autoComplete="email" /></div>
-          {err && <div className="err">{err}</div>}
-          <button className="cta" disabled={busy}>{busy ? 'Sending…' : 'Email me a sign-in link'}</button>
-        </form>
-      ) : (
-        <form onSubmit={verify}>
-          <p>Check your inbox. Tap the link, or type the code from the email here.</p>
-          <div className="field"><input className="input" inputMode="numeric" placeholder="Code" value={code} onChange={e => setCode(e.target.value)} autoComplete="one-time-code" /></div>
-          {err && <div className="err">{err}</div>}
-          <button className="cta" disabled={busy || !code}>Sign in</button>
-        </form>
-      )}
+      <form onSubmit={submit}>
+        <div className="field"><input className="input" type="email" required placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} autoComplete="username" /></div>
+        <div className="field"><input className="input" type="password" required placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" /></div>
+        {err && <div className="err">{err}</div>}
+        <button className="cta" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
+      </form>
     </div>
   )
 }
