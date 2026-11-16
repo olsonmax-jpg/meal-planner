@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { supabase } from './supabase.js'
 import { AISLES, guessAisle } from './aisles.js'
 import Icon from './Icon.jsx'
-import { scaleQty, annotate, parseMethod } from './recipeUtils.js'
+import { convertQty, convertTemps, scaleQty, annotate, parseMethod } from './recipeUtils.js'
 import { GROCERIES } from './groceries.js'
 
 const host = (u) => { try { return new URL(u).hostname.replace(/^www\./, '') } catch { return '' } }
@@ -168,15 +168,36 @@ function Main({ session }) {
   else body = <Shopping {...ctx} />
 
   const fullPage = view?.type === 'import' || view?.type === 'write'
+  const ORDER = ['recipes', 'week', 'shop']
+  const prevTab = useRef(tab)
+  const dir = ORDER.indexOf(tab) - ORDER.indexOf(prevTab.current)
+  useEffect(() => { prevTab.current = tab }, [tab])
+  const g = useRef(null)
+  const onTS = (e) => {
+    if (e.touches.length !== 1) { g.current = null; return }
+    const t = e.touches[0]
+    g.current = { x: t.clientX, y: t.clientY, edge: t.clientX < 28, skip: !!e.target.closest?.('input,textarea,select,.noswipe,.sheet,.overlay') }
+  }
+  const onTE = (e) => {
+    const s0 = g.current; g.current = null
+    if (!s0 || s0.skip || sheet) return
+    const t = e.changedTouches[0]
+    const dx = t.clientX - s0.x, dy = t.clientY - s0.y
+    if (Math.abs(dx) < 64 || Math.abs(dx) < Math.abs(dy) * 1.6) return
+    if (view) { if (s0.edge && dx > 0) { if (view.type === 'write' && !confirm('Discard this recipe?')) return; setView(null) } return }
+    const i = ORDER.indexOf(tab) + (dx < 0 ? 1 : -1)
+    if (i >= 0 && i < ORDER.length) setTab(ORDER[i])
+  }
 
   return (
-    <div className="app">
-      <div key={tab + ':' + (view ? view.type + (view.id || '') : '')}>{body}</div>
+    <div className="app" onTouchStart={onTS} onTouchEnd={onTE}>
+      <div key={tab + ':' + (view ? view.type + (view.id || '') : '')} className={view ? 'pg' : dir > 0 ? 'pg in-r' : dir < 0 ? 'pg in-l' : 'pg'}>{body}</div>
       {!fullPage && (
         <nav className="tabbar">
-          <span className="ind" style={{ transform: `translateX(${['recipes', 'week', 'shop'].indexOf(tab) * 100}%)` }} />
-          {[['recipes', 'Recipes'], ['week', 'Up next'], ['shop', 'Shopping List']].map(([k, l]) => (
-            <button key={k} className={tab === k ? 'on' : ''} onClick={() => { setTab(k); setView(null) }}>{l}</button>
+          {[['recipes', 'Recipes', 'menu_book'], ['week', 'Up next', 'calendar_month'], ['shop', 'Shopping List', 'shopping_basket']].map(([k, l, ic]) => (
+            <button key={k} className={tab === k ? 'on' : ''} onClick={() => { setTab(k); setView(null) }}>
+              {tab === k && <Icon name={ic} size={20} />}<span>{l}</span>
+            </button>
           ))}
         </nav>
       )}
@@ -218,7 +239,7 @@ function Recipes(p) {
   return (
     <div className="screen">
       <div className="head pagehead">
-        <div className="titleblock"><div className="overline">Zonneweg Kitchen</div><h1 className="display">Recipes</h1></div>
+        <div className="titleblock"><div className="overline">Kitchen</div><h1 className="display">Recipes</h1></div>
         <button className="pill-lime" onClick={() => setSheet('add')}>+ Add</button>
       </div>
       <label className="search">
@@ -314,12 +335,49 @@ function RecipeDetail({ recipe, cats, upNext, addToShopping, onBack, load, setVi
   const [mult, setMult] = useState(1)
   const [done, setDone] = useState(() => new Set())
   const [cook, toggleCook] = useWakeLock(toast)
+  const [pane, setPane] = useState(0)
+  const [drag, setDrag] = useState(0)
+  const [units, setUnitsState] = useState(() => { try { return localStorage.getItem('units') || 'metric' } catch { return 'metric' } })
+  const setUnits = (u) => { setUnitsState(u); try { localStorage.setItem('units', u) } catch { /* ignore */ } }
+  const q = (x) => convertQty(scaleQty(x, mult), units)
+  const wrap = useRef(null); const p0 = useRef(null); const p1 = useRef(null)
+  const [h, setH] = useState(null)
+  useEffect(() => {
+    const el = pane ? p1.current : p0.current
+    if (!el) return
+    const m = () => setH(el.offsetHeight)
+    m()
+    if (typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(m); ro.observe(el)
+    return () => ro.disconnect()
+  }, [pane, mult, units, recipe])
+  const pg = useRef(null)
+  const pts = (e) => {
+    const t = e.touches[0]
+    pg.current = t.clientX < 28 ? null : { x: t.clientX, y: t.clientY, lock: null }
+  }
+  const ptm = (e) => {
+    const s0 = pg.current; if (!s0) return
+    const t = e.touches[0]; const dx = t.clientX - s0.x, dy = t.clientY - s0.y
+    if (s0.lock === null && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) s0.lock = Math.abs(dx) > Math.abs(dy) * 1.2 ? 'h' : 'v'
+    if (s0.lock !== 'h') return
+    const lim = (pane === 0 && dx > 0) || (pane === 1 && dx < 0) ? dx / 4 : dx
+    setDrag(lim)
+  }
+  const pte = (e) => {
+    const s0 = pg.current; pg.current = null
+    if (!s0 || s0.lock !== 'h') { setDrag(0); return }
+    const dx = e.changedTouches[0].clientX - s0.x
+    if (dx < -50 && pane === 0) setPane(1)
+    else if (dx > 50 && pane === 1) setPane(0)
+    setDrag(0)
+  }
   const cat = cats.find(c => c.id === recipe.category_id)
   const inQ = upNext.some(u => u.recipe_id === recipe.id)
   const all = sel.size === recipe.ingredients.length
   const toggle = (id) => setSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
   const add = async () => {
-    await addToShopping(recipe.ingredients.filter(i => sel.has(i.id)).map(i => ({ name: i.name, quantity: scaleQty(i.quantity, mult), aisle: i.aisle, recipe_id: recipe.id })))
+    await addToShopping(recipe.ingredients.filter(i => sel.has(i.id)).map(i => ({ name: i.name, quantity: q(i.quantity), aisle: i.aisle, recipe_id: recipe.id })))
     setSel(new Set())
   }
   const del = async () => {
@@ -348,13 +406,20 @@ function RecipeDetail({ recipe, cats, upNext, addToShopping, onBack, load, setVi
         <button className={'cookpill' + (cook ? ' on' : '')} onClick={toggleCook}><span className="dot" />{cook ? 'Cooking' : 'Cook mode'}</button>
       </div>
       <div className="row-between" style={{ marginTop: 8 }}>
-        {cat ? <span className="chip">{cat.name}</span> : <span />}
+        <div className="seg" role="group" aria-label="Section">
+          {['Ingredients', 'Method'].map((l, n) => <button key={l} className={pane === n ? 'on' : ''} onClick={() => setPane(n)}>{l}</button>)}
+        </div>
         <button className={'pill-lime' + (inQ ? ' on' : '')} onClick={() => toggleQueue(recipe)}>{inQ ? 'In Up next' : '+ Up next'}</button>
       </div>
       <h1 className="title">{recipe.title}</h1>
       <div className="caption">{[recipe.minutes && `${recipe.minutes} min`, recipe.servings && `Serves ${Math.round(recipe.servings * mult)}`, plural(recipe.ingredients.length, 'ingredient')].filter(Boolean).join(' · ')}</div>
-      <div className="seg" role="group" aria-label="Scale recipe">
-        {[1, 2, 3].map(m => <button key={m} className={mult === m ? 'on' : ''} onClick={() => setMult(m)}>{m === 1 ? 'Original' : `${m}×`}</button>)}
+      <div className="row-between" style={{ gap: 8 }}>
+        <div className="seg" role="group" aria-label="Scale recipe">
+          {[1, 2, 3].map(m => <button key={m} className={mult === m ? 'on' : ''} onClick={() => setMult(m)}>{m === 1 ? 'Original' : `${m}×`}</button>)}
+        </div>
+        <div className="seg" role="group" aria-label="Units">
+          {[['metric', 'Metric'], ['imperial', 'Imperial']].map(([k, l]) => <button key={k} className={units === k ? 'on' : ''} onClick={() => setUnits(k)}>{l}</button>)}
+        </div>
       </div>
       {recipe.source_url && (
         <a className="source" href={recipe.source_url} target="_blank" rel="noopener noreferrer">
@@ -362,34 +427,42 @@ function RecipeDetail({ recipe, cats, upNext, addToShopping, onBack, load, setVi
           <Icon name="arrow_outward" size={24} color="var(--green)" />
         </a>
       )}
-      <div className="row-between"><h2 className="heading">Ingredients</h2>
-        <button className="link" onClick={() => setSel(all ? new Set() : new Set(recipe.ingredients.map(i => i.id)))}>{all ? 'Select none' : 'Select all'}</button></div>
-      {groups.map(({ g, items }) => (
-        <div key={g}>
-          {g && <div className="overline ghead">{g}</div>}
-          {items.map(i => (
-            <button key={i.id} className="crow" onClick={() => toggle(i.id)} style={{ borderBottom: '1px solid var(--line)' }}>
-              <span className={'box' + (sel.has(i.id) ? ' on' : '')}>{sel.has(i.id) && <Icon name="check" size={18} />}</span>
-              <Lock q={scaleQty(i.quantity, mult)} n={i.name} />
-            </button>
+      <div className="panes noswipe-v" ref={wrap} style={h ? { height: h } : undefined} onTouchStart={pts} onTouchMove={ptm} onTouchEnd={pte} onTouchCancel={pte}>
+        <div className={'track' + (drag ? ' dragging' : '')} style={{ transform: `translateX(calc(${-pane * 50}% + ${drag}px))` }}>
+          <div className="pane" ref={p0} aria-hidden={pane !== 0}>
+          <div className="row-between"><h2 className="heading">Ingredients</h2>
+            <button className="link" onClick={() => setSel(all ? new Set() : new Set(recipe.ingredients.map(i => i.id)))}>{all ? 'Select none' : 'Select all'}</button></div>
+          {groups.map(({ g, items }) => (
+            <div key={g}>
+              {g && <div className="overline ghead">{g}</div>}
+              {items.map(i => (
+                <button key={i.id} className="crow" onClick={() => toggle(i.id)} style={{ borderBottom: '1px solid var(--line)' }}>
+                  <span className={'box' + (sel.has(i.id) ? ' on' : '')}>{sel.has(i.id) && <Icon name="check" size={18} />}</span>
+                  <Lock q={q(i.quantity)} n={i.name} />
+                </button>
+              ))}
+            </div>
           ))}
-        </div>
-      ))}
-      <h2 className="heading" style={{ marginTop: 12 }}>Method</h2>
-      {steps.length === 0 && <div className="muted">No method saved for this recipe{recipe.source_url ? '. Use “Cook from the original” above.' : '.'}</div>}
-      <div className="steps">
-        {steps.map((st, n) => (
-          <div key={n}>
-            {st.s && st.s !== steps[n - 1]?.s && <div className="overline ghead" style={{ marginTop: n ? 22 : 0 }}>{st.s}</div>}
-            <button className={'step' + (done.has(n) ? ' done' : '')} onClick={() => tick(n)}>
-              <span className="snum">{done.has(n) ? <Icon name="check" size={16} /> : n + 1}</span>
-              <p>{st.parts.map((p, k) => p.chip ? <span key={k} className="qchip">{scaleQty(byId[p.chip].quantity, mult)}</span> : <React.Fragment key={k}>{p.t}</React.Fragment>)}</p>
-            </button>
           </div>
-        ))}
+          <div className="pane" ref={p1} aria-hidden={pane !== 1}>
+          <h2 className="heading">Method</h2>
+          {steps.length === 0 && <div className="muted">No method saved for this recipe{recipe.source_url ? '. Use “Cook from the original” above.' : '.'}</div>}
+          <div className="steps">
+            {steps.map((st, n) => (
+              <div key={n}>
+                {st.s && st.s !== steps[n - 1]?.s && <div className="overline ghead" style={{ marginTop: n ? 22 : 0 }}>{st.s}</div>}
+                <button className={'step' + (done.has(n) ? ' done' : '')} onClick={() => tick(n)}>
+                  <span className="snum">{done.has(n) ? <Icon name="check" size={16} /> : n + 1}</span>
+                  <p>{st.parts.map((p, k) => p.chip ? <span key={k} className="qchip">{q(byId[p.chip].quantity)}</span> : <React.Fragment key={k}>{convertTemps(p.t, units)}</React.Fragment>)}</p>
+                </button>
+              </div>
+            ))}
+          </div>
+          </div>
+        </div>
       </div>
       <button className="link" style={{ marginTop: 28, color: '#9b2c1f' }} onClick={del}>Delete recipe</button>
-      <div className="cta-bar"><button className="cta" disabled={!sel.size} onClick={add}>{sel.size ? `Add ${sel.size} to shopping list` : 'Select ingredients to add'}</button></div>
+      <div className="cta-bar" style={pane ? { display: 'none' } : undefined}><button className="cta" disabled={!sel.size} onClick={add}>{sel.size ? `Add ${sel.size} to shopping list` : 'Select ingredients to add'}</button></div>
     </div>
   )
 }

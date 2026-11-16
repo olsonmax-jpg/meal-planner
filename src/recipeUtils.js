@@ -71,3 +71,44 @@ export function annotate(steps, ings, used = new Set()) {
 export function parseMethod(text) {
   return text.split(/\n\s*\n|\n/).map(s => s.replace(/^\s*(?:step\s*)?\d+[.):]\s*/i, '').trim()).filter(Boolean).map(t => ({ t, s: null }))
 }
+
+// ---- Unit conversion (tbsp / tsp are always left as written) ----
+const UNIT_RE = new RegExp(`^(\\s*)(${NUM})(?:(\\s*[-–]\\s*)(${NUM}))?(\\s*)(fl\\.?\\s*oz|ounces?|oz|lbs?|pounds?|cups?|kilograms?|kg|grams?|g|millilitres?|milliliters?|ml|litres?|liters?|l)\\b`, 'i')
+const TO_BASE = { g: ['m', 1], gram: ['m', 1], grams: ['m', 1], kg: ['m', 1000], kilogram: ['m', 1000], kilograms: ['m', 1000], oz: ['m', 28.35], ounce: ['m', 28.35], ounces: ['m', 28.35], lb: ['m', 453.6], lbs: ['m', 453.6], pound: ['m', 453.6], pounds: ['m', 453.6],
+  ml: ['v', 1], millilitre: ['v', 1], millilitres: ['v', 1], milliliter: ['v', 1], milliliters: ['v', 1], l: ['v', 1000], litre: ['v', 1000], litres: ['v', 1000], liter: ['v', 1000], liters: ['v', 1000], cup: ['v', 240], cups: ['v', 240], floz: ['v', 29.57] }
+const METRIC_UNITS = new Set(['g', 'gram', 'grams', 'kg', 'kilogram', 'kilograms', 'ml', 'millilitre', 'millilitres', 'milliliter', 'milliliters', 'l', 'litre', 'litres', 'liter', 'liters'])
+const r5 = (n) => (n >= 50 ? Math.round(n / 5) * 5 : Math.round(n))
+const dec = (n) => String(Math.round(n * 10) / 10).replace(/\.0$/, '')
+function show(base, kind, sys, ref) {
+  if (sys === 'metric') {
+    if (ref >= 1000) return [dec(base / 1000), kind === 'm' ? 'kg' : 'l']
+    return [String(r5(base)), kind === 'm' ? 'g' : 'ml']
+  }
+  if (kind === 'm') return ref >= 454 ? [fmt(Math.round(base / 453.6 * 4) / 4), 'lb'] : [fmt(Math.round(base / 28.35 * 2) / 2), 'oz']
+  return ref >= 118 ? [fmt(Math.round(base / 240 * 4) / 4), base / 240 > 1 ? 'cups' : 'cup'] : [fmt(Math.round(base / 29.57 * 2) / 2), 'fl oz']
+}
+export function convertQty(q, sys) {
+  if (!q || !sys) return q || ''
+  const m = UNIT_RE.exec(q)
+  if (!m) return q
+  const key = m[6].toLowerCase().replace(/[.\s]/g, '')
+  const [kind, f] = TO_BASE[key] || []
+  if (!kind) return q
+  const isMetric = METRIC_UNITS.has(key)
+  if (isMetric === (sys === 'metric')) return q
+  const a = val(m[2]) * f
+  const b = m[4] ? val(m[4]) * f : null
+  const ref = Math.max(a, b || 0)
+  const [av, unit] = show(a, kind, sys, ref)
+  const bv = b == null ? null : show(b, kind, sys, ref)[0]
+  return `${m[1]}${av}${bv ? m[3] + bv : ''} ${unit}${q.slice(m[0].length)}`.trim()
+}
+export function convertTemps(text, sys) {
+  if (!sys) return text
+  return text.replace(/(\d{2,3})\s*°\s*([CF])\b/g, (all, n, u) => {
+    n = +n
+    if (sys === 'metric' && u === 'F') return `${Math.round((n - 32) * 5 / 9 / 5) * 5}°C`
+    if (sys === 'imperial' && u === 'C') return `${Math.round((n * 9 / 5 + 32) / 5) * 5}°F`
+    return all
+  })
+}

@@ -204,3 +204,23 @@ button:active:not(:disabled), .rcard:active, .tile:active, .option:active { tran
 .suggest button + button { border-top: 1px solid var(--line); border-radius: 0; }
 .suggest button svg { color: var(--green); flex: none; }
 .suggest b { font-weight: 600; }
+
+/* round 4: Figma updates + gestures */
+.tabbar { height: 48px; padding: 0 7px; gap: 0; align-items: center; width: min(calc(100% - 48px), 382px); }
+.tabbar .ind { display: none; }
+.tabbar button { flex: 1 1 0; width: auto; height: 34px; padding: 0 6px; border-radius: 100px; display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--sage); background: none !important; white-space: nowrap; transition: flex-grow .4s cubic-bezier(.3,1.2,.5,1), background-color .3s ease, color .3s ease, transform .18s; }
+.tabbar button.on { flex-grow: 1.35; background: var(--lime) !important; color: var(--green); }
+.tabbar button svg { flex: none; }
+.seg { background: transparent; border: 1px solid var(--line); padding: 3px; }
+.tile { background: transparent; border: 1px solid var(--line); }
+.tile .name { font-family: var(--font); font-weight: 500; font-size: 15px; line-height: 20px; }
+.panes { overflow: hidden; touch-action: pan-y; transition: height .3s ease; margin: 0 -24px; }
+.track { display: flex; align-items: flex-start; width: 200%; transition: transform .35s cubic-bezier(.2,.8,.2,1); }
+.track.dragging { transition: none; }
+.pane { width: 50%; padding: 0 24px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.pane[aria-hidden="true"] { pointer-events: none; }
+.pg.in-r { animation: inr .32s cubic-bezier(.2,.8,.2,1) both; }
+.pg.in-l { animation: inl .32s cubic-bezier(.2,.8,.2,1) both; }
+@keyframes inr { from { opacity: 0; transform: translateX(28px); } to { opacity: 1; transform: none; } }
+@keyframes inl { from { opacity: 0; transform: translateX(-28px); } to { opacity: 1; transform: none; } }
+html, body { overscroll-behavior-x: none; }
