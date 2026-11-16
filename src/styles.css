@@ -224,3 +224,12 @@ button:active:not(:disabled), .rcard:active, .tile:active, .option:active { tran
 @keyframes inr { from { opacity: 0; transform: translateX(28px); } to { opacity: 1; transform: none; } }
 @keyframes inl { from { opacity: 0; transform: translateX(-28px); } to { opacity: 1; transform: none; } }
 html, body { overscroll-behavior-x: none; }
+
+/* round 4b: nav exactly as Figma (342 wide, 12px padding, 3 equal 106px slots, 34px lime pill, 10px icon gap) */
+.tabbar { height: 48px; padding: 0 12px; width: min(calc(100% - 48px), 382px); bottom: max(16px, calc(env(safe-area-inset-bottom) + 2px)); justify-content: flex-start; }
+.tabbar button { flex: 1 1 0; height: 34px; padding: 0; gap: 10px; font-size: 14px; line-height: 18px; font-weight: 500; color: var(--sage); }
+.tabbar button.on { flex-grow: 1; color: var(--green); }
+/* items hug their content (13px side padding), spread evenly like the Figma component */
+.tabbar { justify-content: space-between; }
+.tabbar button { flex: 0 0 auto; padding: 0 13px; }
+.tabbar button.on { flex-grow: 0; }
