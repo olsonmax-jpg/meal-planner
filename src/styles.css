@@ -233,3 +233,8 @@ html, body { overscroll-behavior-x: none; }
 .tabbar { justify-content: space-between; }
 .tabbar button { flex: 0 0 auto; padding: 0 13px; }
 .tabbar button.on { flex-grow: 0; }
+/* round 4c: nav per Figma spec: 342x55, 12px side padding, 3 equal slots (active Shopping List fixed 147, gap 8), 34px pill centred */
+.tabbar { height: 55px; padding: 0 12px; justify-content: flex-start; align-items: center; bottom: max(16px, calc(env(safe-area-inset-bottom) - 5px)); }
+.tabbar button { flex: 1 1 0; min-width: 0; padding: 0; height: 34px; gap: 10px; }
+.tabbar button.on { flex: 1 1 0; }
+.tabbar button:nth-child(3).on { flex: 0 0 147px; gap: 8px; }
